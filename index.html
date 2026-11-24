@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101014">
+  <meta name="description" content="ساخت، ترجمه و ویرایش زیرنویس با پردازش روی دستگاه">
+  <title>Xpert Caption Web | زیرنویس و ترجمه</title>
+  <link rel="icon" href="./icon-192.png">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <header class="top shell">
+    <a class="brand" href="./" aria-label="Xpert Caption Web">
+      <span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+      <span dir="ltr"><b>XPERT</b> Caption Web</span>
+    </a>
+    <span class="privacy"><i></i> پردازش روی دستگاه</span>
+  </header>
+  <main class="shell">
+    <section class="hero" aria-labelledby="page-title">
+      <div class="hero-copy">
+        <h1 id="page-title">صدا به <em>زیرنویس</em></h1>
+        <p>از فایل یا میکروفون شروع کن. متن را ترجمه و اصلاح کن و برای تدوین خروجی بگیر.</p>
+      </div>
+      <div class="wave" aria-hidden="true"></div>
+    </section>
+    <div class="workspace">
+      <section class="panel editor" aria-labelledby="input-title">
+        <div class="section-head">
+          <h2 id="input-title">ورودی</h2>
+          <div class="source-selection" id="source-selection" hidden>
+            <span id="source-info" dir="auto"></span>
+            <button type="button" id="remove-source" aria-label="حذف فایل از کپشن‌ساز" title="حذف فایل از کپشن‌ساز">×</button>
+          </div>
+        </div>
+        <div class="tabs" aria-label="نوع ورودی">
+          <button type="button" data-input="file" aria-pressed="true">فایل صدا یا ویدیو</button>
+          <button type="button" data-input="mic" aria-pressed="false">میکروفون</button>
+          <button type="button" data-input="tab" hidden aria-pressed="false">صدای تب</button>
+          <button type="button" data-input="instagram" hidden aria-pressed="false">لینک اینستاگرام</button>
+          <button type="button" data-input="derived" aria-pressed="false" hidden>صدای استخراج‌شده</button>
+          <button type="button" data-input="text" aria-pressed="false">متن</button>
+        </div>
+        <div id="input-file">
+          <input id="media-file" type="file" accept="audio/*,video/*,.m4a,.mp3,.wav,.mp4,.mov,.webm,.ogg,.flac" hidden>
+          <button class="dropzone" id="dropzone" type="button">
+            <span class="upload-symbol" aria-hidden="true">+</span>
+            <strong>فایل را انتخاب کن یا اینجا بینداز</strong>
+            <small>تا ۱۵ دقیقه و ۳۰۰ مگابایت</small>
+          </button>
+        </div>
+        <div id="input-record" class="record-area" hidden>
+          <p id="record-help"></p>
+          <button type="button" id="record" class="button secondary">شروع ضبط</button>
+          <button type="button" id="record-save" class="button secondary" hidden>دانلود ضبط</button>
+          <output id="record-time" dir="ltr" hidden>00:00</output>
+        </div>
+        <div id="input-instagram" class="instagram" hidden>
+          <form id="instagram-form" class="instagram-form">
+            <label for="instagram-url">لینک پست ویدیویی یا ریل عمومی</label>
+            <div class="instagram-line">
+              <input id="instagram-url" type="url" inputmode="url" dir="ltr" placeholder="https://www.instagram.com/reel/…" required>
+              <button type="submit" class="button secondary">بررسی لینک</button>
+            </div>
+          </form>
+          <div id="instagram-options" class="instagram-options" hidden>
+            <label for="instagram-format">کیفیت اصلی موجود</label>
+            <select id="instagram-format"></select>
+            <div class="instagram-actions">
+              <button id="instagram-import" type="button" class="button primary">افزودن به کپشن‌ساز</button>
+              <button id="instagram-download" type="button" class="button secondary">دانلود ویدیو</button>
+            </div>
+          </div>
+          <p id="instagram-status" class="quiet" role="status">کیفیت‌ها از خود ویدیو خوانده می‌شوند.</p>
+          <a id="instagram-open" target="_blank" rel="noopener" hidden>باز کردن پست برای ضبط صدای تب</a>
+        </div>
+        <div id="input-text" hidden>
+          <label class="visually-hidden" for="source-text">متن ورودی</label>
+          <textarea id="source-text" rows="5" maxlength="20000" dir="auto" placeholder="متن را اینجا وارد کن"></textarea>
+        </div>
+        <p id="input-derived" class="quiet" hidden>این صدا از فایل منبع استخراج شده و آمادهٔ تشخیص گفتار است.</p>
+        <div class="player" id="player" hidden>
+          <div class="player-head"><span id="player-label"></span><output id="player-clock" dir="ltr">00:00 / 00:00</output></div>
+          <div class="media-stage">
+            <video id="preview" playsinline preload="metadata" aria-label="پیش‌نمایش فایل"></video>
+            <div id="subtitle-overlay" class="subtitle-overlay" dir="auto" aria-hidden="true"></div>
+            <canvas id="waveform" dir="ltr" aria-label="شکل موج صدا"></canvas>
+          </div>
+          <input id="player-seek" type="range" min="0" max="1" value="0" step=".01" dir="ltr" aria-label="موقعیت پخش">
+          <div class="player-controls">
+            <div class="transport">
+              <button id="player-back" type="button" class="button secondary" aria-label="پنج ثانیه عقب">−۵</button>
+              <button id="player-play" type="button" class="button primary play-control" aria-label="پخش">▶</button>
+              <button id="player-forward" type="button" class="button secondary" aria-label="پنج ثانیه جلو">+۵</button>
+            </div>
+            <div class="play-options">
+              <label class="volume-label">صدا<input id="player-volume" type="range" min="0" max="1" value="1" step=".05" dir="ltr"></label>
+              <label class="visually-hidden" for="player-rate">سرعت پخش</label>
+              <select id="player-rate" dir="ltr"><option value=".75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select>
+              <button id="player-fullscreen" type="button" class="button secondary">تمام‌صفحه</button>
+            </div>
+          </div>
+          <div id="audio-subtitle" class="audio-subtitle" dir="auto" hidden></div>
+        </div>
+        <details id="conversion-tools" class="conversion-tools" hidden>
+          <summary>استخراج صدا و ساخت کیفیت ویدیو</summary>
+          <div class="settings">
+            <label>فرمت صدا<select id="convert-audio-format"><option value="wav">WAV</option><option value="mp3">MP3</option></select></label>
+            <label>کیفیت صدا<select id="convert-audio-quality"></select></label>
+          </div>
+          <div class="instagram-actions">
+            <button id="convert-audio-use" type="button" class="button primary">صدا برای تشخیص گفتار</button>
+            <button id="convert-audio-save" type="button" class="button secondary">دانلود صدا</button>
+          </div>
+          <div id="convert-video" class="conversion-video" hidden>
+            <label>کیفیت ساخته‌شدهٔ ویدیو<select id="convert-video-quality"></select></label>
+            <button id="convert-video-save" type="button" class="button secondary">ساخت و دانلود ویدیو</button>
+          </div>
+          <p id="conversion-status" class="quiet" role="status"></p>
+        </details>
+        <p id="draft-status" class="quiet draft-status" role="status"></p>
+        <div class="settings">
+          <label>زبان ورودی
+            <select id="source-language"></select>
+          </label>
+          <label>ترجمه به
+            <select id="target-language"></select>
+          </label>
+        </div>
+        <p id="translation-note" class="quiet" hidden>ترجمه روی دستگاه انجام می‌شود و بار اول حدود ۶۴۰ مگابایت دانلود جداگانه دارد.</p>
+        <fieldset class="output-settings">
+          <legend>حالت خروجی</legend>
+          <div class="segments">
+            <label><input type="radio" name="output-mode" value="word">کلمه‌ای</label>
+            <label><input type="radio" name="output-mode" value="sentence" checked>جمله‌ای</label>
+            <label><input type="radio" name="output-mode" value="full">متن کامل</label>
+          </div>
+        </fieldset>
+        <div class="run-bar">
+          <button class="button primary" id="start" type="button">ساخت زیرنویس</button>
+          <button class="button secondary" id="cancel" type="button" hidden>توقف</button>
+          <span id="status" role="status" aria-live="polite"></span>
+        </div>
+        <progress id="progress" aria-label="پیشرفت پردازش" hidden></progress>
+        <div id="error" class="error" role="alert" hidden></div>
+      </section>
+      <aside class="panel device" aria-labelledby="device-title">
+        <div class="section-head"><h2 id="device-title">دستگاه و مدل</h2><span id="gpu-badge" class="pill">در حال بررسی</span></div>
+        <dl class="stats">
+          <div><dt>سیستم‌عامل</dt><dd id="os-stat">—</dd></div>
+          <div><dt>پردازنده‌های منطقی</dt><dd id="cpu-stat">—</dd></div>
+          <div><dt>رم گزارش‌شده</dt><dd id="ram-stat">—</dd></div>
+          <div><dt>گرافیک</dt><dd id="gpu-stat" dir="auto">—</dd></div>
+        </dl>
+        <p class="quiet stat-note">مشخصات بر اساس اطلاعاتی است که مرورگر گزارش می‌دهد.</p>
+        <fieldset class="model-settings">
+          <legend>مدل تشخیص گفتار</legend>
+          <div id="models"></div>
+        </fieldset>
+        <label id="cpu-override" class="quiet" hidden><input id="persian-cpu" type="checkbox"> اجرای مدل فارسی با CPU</label>
+        <p id="recommendation-note" class="quiet"></p>
+      </aside>
+      <section class="panel result" id="result" aria-labelledby="result-title" hidden>
+        <div class="section-head"><h2 id="result-title">پیش‌نمایش و اصلاح</h2><span id="result-meta"></span></div>
+        <p class="quiet" id="result-note"></p>
+        <div id="parallel-translation" hidden>
+          <div class="source-transcript">
+            <div class="section-head"><h3 id="original-language">زبان اصلی</h3><button id="copy-original" type="button" class="button secondary">کپی متن اصلی</button></div>
+            <textarea id="original-transcript" rows="4" dir="auto" readonly aria-labelledby="original-language"></textarea>
+          </div>
+          <h3 id="translated-language">ترجمه</h3>
+        </div>
+        <fieldset class="style-settings" id="style-settings" hidden>
+          <legend>استایل متن گرافیکی</legend>
+          <div id="caption-styles" class="style-grid"></div>
+        </fieldset>
+        <div id="output-editor"></div>
+        <div class="export-bar">
+          <button type="button" id="copy" class="button primary">کپی متن</button>
+          <button type="button" id="export-txt" class="button secondary">متن TXT</button>
+          <button type="button" id="export-srt" class="button secondary">زیرنویس SRT</button>
+          <button type="button" id="export-graphics" class="button secondary">متن گرافیکی پریمیر</button>
+          <span id="export-status" role="status"></span>
+        </div>
+        <p id="graphics-note" class="quiet" hidden>فایل پروژه شامل یک سکانس با لایه‌های متن قابل ویرایش است. در پریمیر با File › Import سکانس را وارد کن.</p>
+        <label id="graphics-fps-label" class="graphics-fps quiet" hidden>فریم‌ریت پروژهٔ پریمیر
+          <select id="graphics-fps">
+            <option value="23.976">23.976</option>
+            <option value="24">24</option>
+            <option value="25">25</option>
+            <option value="29.97">29.97</option>
+            <option value="30" selected>30</option>
+            <option value="50">50</option>
+            <option value="59.94">59.94</option>
+            <option value="60">60</option>
+          </select>
+        </label>
+      </section>
+    </div>
+  </main>
+  <footer class="shell">
+    <p>مدل‌ها در اولین استفاده دانلود می‌شوند. صدا، ویدیو و متن داخل مرورگر پردازش می‌شوند.</p>
+    <details>
+      <summary>منابع مدل‌ها</summary>
+      <p><a href="https://huggingface.co/givia/whisper-large-v3-turbo-persian" target="_blank" rel="noopener">مدل فارسی Givia</a> · <a href="https://huggingface.co/mehrshadjavid/whisper-large-v3-turbo-persian-ONNX" target="_blank" rel="noopener">نسخهٔ ONNX</a> · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a></p>
+      <p><a href="https://huggingface.co/onnx-community/whisper-base_timestamped" target="_blank" rel="noopener">Whisper Base</a> · <a href="https://huggingface.co/onnx-community/whisper-small_timestamped" target="_blank" rel="noopener">Whisper Small</a> · <a href="https://huggingface.co/facebook/m2m100_418M" target="_blank" rel="noopener">ترجمهٔ M2M100</a></p>
+      <p>مرجع تنوع استایل <a href="https://captiono.ai/" target="_blank" rel="noopener">Captiono</a> · <a href="https://apps.apple.com/us/app/capzy-ai-caption/id6748906711" target="_blank" rel="noopener">Capzy</a> · <a href="https://www.capcut.com/resource/caption-style" target="_blank" rel="noopener">CapCut</a></p>
+    </details>
+  </footer>
+</body>
+</html>
