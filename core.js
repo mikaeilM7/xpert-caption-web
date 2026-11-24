@@ -68,7 +68,12 @@ export async function capabilities(nav = navigator, doc = document) {
 export function speechOptions(hardware, language, persianCpu = false) {
   if (hardware.appleMobile) {
     const id = language === 'fa' ? 'iphonePersian' : 'iphone';
-    return [{ ...SPEECH[id], id }];
+    const options = [{ ...SPEECH[id], id }];
+    if (language === 'fa' && hardware.webgpu && hardware.f16) {
+      options.push({ ...SPEECH.persian, id: 'iphoneTurbo', title: 'فارسی دقیق‌تر · Turbo',
+        detail: 'Whisper Large V3 Turbo · گرافیک' });
+    }
+    return options;
   }
   const useGPU = hardware.webgpu;
   const options = [{ ...SPEECH.light }, { ...SPEECH.balanced, device: useGPU ? 'webgpu' : 'wasm' }];

@@ -84,7 +84,14 @@ async function getPipeline(kind, model, post) {
   await unload();
   const iphone = model.id === 'iphone';
   const iphonePersian = model.id === 'iphonePersian';
-  registerModelRevision(model.repo, model.revision, iphone || iphonePersian);
+  const iphoneTurbo = model.id === 'iphoneTurbo';
+  if (iphoneTurbo) {
+    const adapter = await navigator.gpu?.requestAdapter();
+    if (!adapter?.features.has('shader-f16') || adapter.info?.isFallbackAdapter) {
+      throw new Error('گرافیک Safari برای مدل Turbo در دسترس نیست.');
+    }
+  }
+  registerModelRevision(model.repo, model.revision, iphone || iphonePersian || iphoneTurbo);
   post({ type: 'stage', stage: 'model' });
   const options = {
     revision: model.revision,
@@ -97,7 +104,10 @@ async function getPipeline(kind, model, post) {
     instance = await loadMobileSpeech(model.repo, { ...options, quantized: true });
   } else {
     const library = await (iphonePersian ? getMobileLibrary(MOBILE_PERSIAN_CDN) : getLibrary());
-    instance = await library.pipeline(kind, model.repo, { ...options, device: model.device, dtype: model.dtype });
+    instance = await library.pipeline(kind, model.repo, {
+      ...options, device: model.device, dtype: model.dtype,
+      ...(iphoneTurbo ? { session_options: { graphOptimizationLevel: 'basic' } } : {}),
+    });
   }
   active = { key, instance };
   return instance;
@@ -138,8 +148,9 @@ async function speechJob(message, post) {
   }
   let model = message.model;
   const iphone = model.id === 'iphone';
+  const iphoneTurbo = model.id === 'iphoneTurbo';
   const windowTiming = model.id === 'iphonePersian';
-  if (windowTiming) windows = windowsAtPauses(input);
+  if (windowTiming || iphoneTurbo) windows = windowsAtPauses(input);
   async function execute() {
     const transcriber = await getPipeline('automatic-speech-recognition', model, post);
     post({ type: 'stage', stage: 'speech' });
@@ -151,7 +162,7 @@ async function speechJob(message, post) {
       const config = {
         ...(end - start > (iphone ? 15 : 25) ? { chunk_length_s: iphone ? 15 : 24, stride_length_s: iphone ? 2 : 3 } : {}),
         task: 'transcribe', return_timestamps: windowTiming ? false : realWords ? 'word' : true,
-        num_beams: iphone || windowTiming ? 1 : model.id === 'persian' ? (model.device === 'webgpu' ? 3 : 2) : 2,
+        num_beams: iphone || iphoneTurbo || windowTiming ? 1 : model.id === 'persian' ? (model.device === 'webgpu' ? 3 : 2) : 2,
         ...(message.language === 'auto' ? {} : { language: message.language }),
       };
       let result;

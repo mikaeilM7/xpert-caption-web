@@ -14,6 +14,12 @@ const sourceLanguage = $('source-language');
 const targetLanguage = $('target-language');
 const preview = $('preview');
 const appleMobile = isAppleMobile();
+const TURBO_RUN = 'xpert-caption-iphone-turbo-running';
+let turboInterrupted = false;
+try {
+  turboInterrupted = appleMobile && sessionStorage.getItem(TURBO_RUN) === '1';
+  if (turboInterrupted) sessionStorage.removeItem(TURBO_RUN);
+} catch { /* Session storage can be unavailable. */ }
 let hardware = { appleMobile, os: '', cores: 0, ram: 0, webgpu: false, f16: false, gpuName: '' };
 let selectedModel;
 let manualModel = false;
@@ -133,7 +139,12 @@ function renderModels() {
     radio.checked = model.id === selectedModel;
     radio.disabled = loading || busy || inputType === 'text';
     radio.setAttribute('aria-label', model.title + '، ' + detail.textContent);
-    radio.addEventListener('change', () => { selectedModel = model.id; manualModel = true; });
+    radio.addEventListener('change', () => {
+      selectedModel = model.id;
+      manualModel = true;
+      turboInterrupted = false;
+      if (appleMobile) $('recommendation-note').textContent = mobileModelNote();
+    });
     label.append(radio, info);
     if (model.id === recommended) {
       const badge = document.createElement('b');
@@ -144,12 +155,24 @@ function renderModels() {
   }
   $('recommendation-note').textContent = inputType === 'text'
     ? 'برای متن تایپ‌شده مدل گفتار بارگیری نمی‌شود.'
-    : appleMobile ? (selectedModel === 'iphonePersian'
-      ? 'مدل فارسی روی گوشی اجرا می‌شود. زمان زیرنویس بر اساس بخش‌های صدا تخمین زده می‌شود.'
-      : 'Whisper Base روی گوشی اجرا می‌شود. مدل پس از بارگیری در مرورگر ذخیره می‌شود.')
+    : appleMobile ? mobileModelNote()
     : sourceLanguage.value === 'fa' && recommended !== 'persian'
       ? 'مدل فارسی تخصصی روی این پردازنده کندتر است، ولی می‌توانی دستی انتخابش کنی.'
       : 'برای فارسی، مدل تخصصی روی سخت‌افزار مناسب پیشنهاد می‌شود.';
+}
+
+function mobileModelNote() {
+  if (turboInterrupted) return 'اجرای Turbo با بازشدن دوبارهٔ صفحه قطع شد. مدل فارسی سبک‌تر انتخاب شده است.';
+  if (selectedModel === 'iphoneTurbo') return 'برای اولین تست Turbo یک کلیپ کوتاه انتخاب کن. اگر گرافیک خطا بدهد، مدل فارسی سبک‌تر ادامه می‌دهد.';
+  if (selectedModel === 'iphonePersian') return 'مدل فارسی روی گوشی اجرا می‌شود. زمان زیرنویس بر اساس بخش‌های صدا تخمین زده می‌شود.';
+  return 'Whisper Base روی گوشی اجرا می‌شود. مدل پس از بارگیری در مرورگر ذخیره می‌شود.';
+}
+
+function markTurboRun(running) {
+  try {
+    if (running) sessionStorage.setItem(TURBO_RUN, '1');
+    else sessionStorage.removeItem(TURBO_RUN);
+  } catch { /* The model can run without a recovery marker. */ }
 }
 
 function controls() {
@@ -361,7 +384,9 @@ async function run() {
   const file = inputFile;
   const typed = inputType === 'text' ? $('source-text').value.trim() : '';
   const fromText = inputType === 'text';
-  const model = speechOptions(hardware, fromSetting, $('persian-cpu').checked).find(item => item.id === selectedModel);
+  const options = speechOptions(hardware, fromSetting, $('persian-cpu').checked);
+  const model = options.find(item => item.id === selectedModel);
+  const turboFallback = model?.id === 'iphoneTurbo' ? options.find(item => item.id === 'iphonePersian') : null;
   if ((!fromText && !file) || (fromText && !typed)) return;
   const detectorControl = new AbortController();
   const detector = to && fromSetting === 'auto' ? createLanguageDetector(detectorControl.signal) : null;
@@ -377,16 +402,36 @@ async function run() {
     let words = [];
     let transcript = typed;
     let modelName = '';
+    let usedTurboFallback = false;
     if (!fromText) {
       status('در حال خواندن صدا…');
       const pcm = await decodeMedia(file);
       if (!current()) return;
-      const decoded = await requestEngine({
-        kind: 'speech', audio: pcm, model, language: fromSetting,
+      const recognize = (activeModel, audio) => requestEngine({
+        kind: 'speech', audio, model: activeModel, language: fromSetting,
         words: mode === 'word' && (!to || to === fromSetting),
         filterSpeech: !appleMobile,
-        fallback: model.id === 'balanced' && model.device === 'webgpu' ? { ...model, device: 'wasm' } : null,
-      }, [pcm.buffer]);
+        fallback: activeModel.id === 'balanced' && activeModel.device === 'webgpu' ? { ...activeModel, device: 'wasm' } : null,
+      }, [audio.buffer]);
+      let decoded;
+      if (turboFallback) markTurboRun(true);
+      try {
+        decoded = await recognize(model, pcm);
+        if (!decoded.transcript) throw new Error('گفتار قابل تشخیص پیدا نشد.');
+      } catch (error) {
+        if (!turboFallback || !current()) throw error;
+        markTurboRun(false);
+        releaseWorker();
+        usedTurboFallback = true;
+        manualModel = false;
+        renderModels();
+        status('Turbo کامل نشد. در حال ادامه با مدل فارسی سبک‌تر…');
+        const retryAudio = await decodeMedia(file);
+        if (!current()) return;
+        decoded = await recognize(turboFallback, retryAudio);
+      } finally {
+        if (turboFallback) markTurboRun(false);
+      }
       ({ transcript, rows, words, model: modelName } = decoded);
       if (!transcript) throw new Error('گفتار قابل تشخیص پیدا نشد.');
     }
@@ -416,7 +461,7 @@ async function run() {
     showResult();
     keepCurrent();
     rememberSlot();
-    status('آماده شد.');
+    status(usedTurboFallback ? 'آماده شد با مدل فارسی سبک‌تر.' : 'آماده شد.');
   } catch (error) {
     if (current()) { showError(error); status(''); }
   } finally {
