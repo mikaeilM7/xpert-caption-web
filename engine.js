@@ -3,9 +3,11 @@ import { fetchModelFile, modelCache, registerModelRevision } from './model-cache
 import { speechRanges } from './speech-filter.js';
 
 const CDN = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.0/dist/transformers.min.js';
+const MOBILE_CDN = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js';
 const TRANSLATOR = 'Xenova/m2m100_418M';
 const TRANSLATOR_REV = '9c374f0b7aca709787cea97b047bfbbd1559d177';
 let transformers;
+let mobileTransformers;
 let active;
 let modelProgress;
 
@@ -29,6 +31,30 @@ async function getLibrary() {
   return transformers;
 }
 
+function reportModelTransfer(file, loaded, total) {
+  modelProgress?.({ type: 'model-transfer', file, loaded, total });
+}
+
+async function getMobileLibrary() {
+  if (!mobileTransformers) {
+    // Transformers 2 uses the worker's fetch directly. Limit the override to the mobile speech model.
+    const originalFetch = self.fetch.bind(self);
+    self.fetch = (url, options) => typeof url === 'string' &&
+      url.startsWith('https://huggingface.co/Xenova/whisper-tiny/resolve/')
+      ? fetchModelFile(url, options, reportModelTransfer) : originalFetch(url, options);
+    mobileTransformers = import(MOBILE_CDN).then(module => {
+      module.env.allowLocalModels = false;
+      module.env.useBrowserCache = false;
+      module.env.useCustomCache = true;
+      module.env.customCache = modelCache;
+      module.env.backends.onnx.wasm.numThreads = 1;
+      module.env.backends.onnx.wasm.proxy = false;
+      return module;
+    }).catch(error => { self.fetch = originalFetch; mobileTransformers = null; throw error; });
+  }
+  return mobileTransformers;
+}
+
 async function unload() {
   if (active) {
     const pipeline = active.instance;
@@ -43,9 +69,11 @@ async function getPipeline(kind, model, post) {
   await unload();
   registerModelRevision(model.repo, model.revision);
   post({ type: 'stage', stage: 'model' });
-  const { pipeline } = await getLibrary();
+  const iphone = model.id === 'iphone';
+  const { pipeline } = await (iphone ? getMobileLibrary() : getLibrary());
   const instance = await pipeline(kind, model.repo, {
-    device: model.device, dtype: model.dtype, revision: model.revision,
+    ...(iphone ? { quantized: true } : { device: model.device, dtype: model.dtype }),
+    revision: model.revision,
     progress_callback(event) {
       post({ type: 'download', state: event.status, file: event.file, loaded: event.loaded, total: event.total });
     },
@@ -65,6 +93,7 @@ async function speechJob(message, post) {
     if (!windows.length) throw new Error('گفتار واضحی پیدا نشد. ضبط را پخش کن و سطح صدا را بررسی کن. برای ویس مرورگر از «صدای تب» استفاده کن.');
   }
   let model = message.model;
+  const iphone = model.id === 'iphone';
   async function execute() {
     const transcriber = await getPipeline('automatic-speech-recognition', model, post);
     post({ type: 'stage', stage: 'speech' });
@@ -74,9 +103,9 @@ async function speechJob(message, post) {
     for (const [index, [start, end]] of windows.entries()) {
       const samples = input.subarray(Math.round(start * 16000), Math.round(end * 16000));
       const config = {
-        ...(end - start > 25 ? { chunk_length_s: 24, stride_length_s: 3 } : {}),
+        ...(end - start > (iphone ? 15 : 25) ? { chunk_length_s: iphone ? 15 : 24, stride_length_s: iphone ? 2 : 3 } : {}),
         task: 'transcribe', return_timestamps: realWords ? 'word' : true,
-        num_beams: model.id === 'persian' ? (model.device === 'webgpu' ? 3 : 2) : 2,
+        num_beams: iphone ? 1 : model.id === 'persian' ? (model.device === 'webgpu' ? 3 : 2) : 2,
         ...(message.language === 'auto' ? {} : { language: message.language }),
       };
       let result;

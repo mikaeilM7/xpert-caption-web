@@ -1,4 +1,4 @@
-import { capabilities, speechOptions, recommendedSpeech, LANGUAGES, languageName, digits,
+import { capabilities, isAppleMobile, speechOptions, recommendedSpeech, LANGUAGES, languageName, digits,
   MAX_BYTES, wordsOf, splitText, timestamp, createSrt, guessScriptLanguage } from './core.js';
 import { decodeMedia, startCapture, videoFile } from './media.js';
 import { CAPTION_STYLES } from './caption-styles.js';
@@ -13,7 +13,8 @@ const modes = [...document.querySelectorAll('[name="output-mode"]')];
 const sourceLanguage = $('source-language');
 const targetLanguage = $('target-language');
 const preview = $('preview');
-let hardware = { os: '', cores: 0, ram: 0, webgpu: false, f16: false, gpuName: '' };
+const appleMobile = isAppleMobile();
+let hardware = { appleMobile, os: '', cores: 0, ram: 0, webgpu: false, f16: false, gpuName: '' };
 let selectedModel;
 let manualModel = false;
 let manualSource = false;
@@ -42,7 +43,7 @@ const player = connectPlayer({
   media: preview, player: $('player'), seek: $('player-seek'), waveform: $('waveform'), play: $('player-play'),
   back: $('player-back'), forward: $('player-forward'), rate: $('player-rate'), volume: $('player-volume'),
   clock: $('player-clock'), fullscreen: $('player-fullscreen'), label: $('player-label'),
-  onTime: updateOverlay, onError: showError,
+  onTime: updateOverlay, onError: showError, drawWaveform: !appleMobile,
 });
 
 function option(select, value, text) { select.add(new Option(text, value)); }
@@ -112,7 +113,7 @@ function renderHardware() {
 
 function renderModels() {
   const options = speechOptions(hardware, sourceLanguage.value, $('persian-cpu').checked);
-  $('cpu-override').hidden = !hardware.webgpu || !['fa', 'auto'].includes(sourceLanguage.value) || inputType === 'text';
+  $('cpu-override').hidden = appleMobile || !hardware.webgpu || !['fa', 'auto'].includes(sourceLanguage.value) || inputType === 'text';
   const recommended = recommendedSpeech(hardware, sourceLanguage.value, options);
   selectedModel = manualModel && options.some(model => model.id === selectedModel) ? selectedModel : recommended;
   $('models').replaceChildren();
@@ -143,6 +144,7 @@ function renderModels() {
   }
   $('recommendation-note').textContent = inputType === 'text'
     ? 'برای متن تایپ‌شده مدل گفتار بارگیری نمی‌شود.'
+    : appleMobile ? 'برای کاهش مصرف حافظه و فشار پردازش گوشی، مدل سبک اجرا می‌شود.'
     : sourceLanguage.value === 'fa' && recommended !== 'persian'
       ? 'مدل فارسی تخصصی روی این پردازنده کندتر است، ولی می‌توانی دستی انتخابش کنی.'
       : 'برای فارسی، مدل تخصصی روی سخت‌افزار مناسب پیشنهاد می‌شود.';
@@ -380,7 +382,7 @@ async function run() {
       const decoded = await requestEngine({
         kind: 'speech', audio: pcm, model, language: fromSetting,
         words: mode === 'word' && (!to || to === fromSetting),
-        filterSpeech: true,
+        filterSpeech: !appleMobile,
         fallback: model.id === 'balanced' && model.device === 'webgpu' ? { ...model, device: 'wasm' } : null,
       }, [pcm.buffer]);
       ({ transcript, rows, words, model: modelName } = decoded);
@@ -394,6 +396,7 @@ async function run() {
     let sections = fromText ? splitText(transcript) : rows.map(row => row.text);
     if (!sections.length) sections = splitText(transcript);
     if (translated) {
+      if (appleMobile && !fromText) releaseWorker();
       sections = await translateParts(sections, from, to);
       rows = rows.map((row, index) => ({ ...row, text: sections[index] }));
       words = [];
@@ -846,7 +849,7 @@ readDrafts(['active', ...slots.keys(), ...[...slots.keys()].map(key => 'media:' 
   changeInput(inputType, true);
 });
 capabilities().then(value => {
-  hardware = value;
+  hardware = { ...value, appleMobile };
   renderHardware();
   controls();
 }).catch(() => {});

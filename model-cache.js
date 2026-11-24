@@ -7,6 +7,7 @@ const MODEL_URL = /^https:\/\/huggingface\.co\/([\w-]+\/[\w.-]+)\/resolve\/(main
 const diskHeaders = { 'X-Xpert-Local-Request': 'model-store' };
 const android = location.origin === 'https://appassets.androidplatform.net';
 const modelRevisions = new Map();
+const fetchUpstream = globalThis.fetch.bind(globalThis);
 let directory;
 let diskSupport;
 
@@ -43,7 +44,7 @@ export async function fetchModelFile(url, options, report = () => {}) {
       }
     }
   }
-  return fetch(canonical, options);
+  return fetchUpstream(canonical, options);
 }
 
 function getDirectory() {
@@ -133,12 +134,12 @@ async function requestRange(url, options, start, end) {
   headers.set('Range', 'bytes=' + start + '-' + end);
   for (let attempt = 0; ; attempt++) {
     try {
-      const result = await fetch(url, { ...options, headers });
+      const result = await fetchUpstream(url, { ...options, headers });
       if (result.status === 206) {
         const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(result.headers.get('content-range') || '');
         if (!range) {
           await result.body?.cancel().catch(() => {});
-          return { full: await fetch(url, options) };
+          return { full: await fetchUpstream(url, options) };
         }
         const [, a, b, size] = range.map(Number);
         if (a !== start || b !== Math.min(end, size - 1) || size <= start || size > MAX_RANGE_FILE)

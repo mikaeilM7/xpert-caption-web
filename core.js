@@ -1,4 +1,6 @@
 export const SPEECH = {
+  iphone: { title: 'سبکِ آیفون', detail: 'Whisper Tiny · پردازنده', size: 45, device: 'wasm', dtype: 'q8',
+    repo: 'Xenova/whisper-tiny', revision: '5332fcc35e32a33b86612b9a57a89be7906102b1' },
   light: { title: 'سبک', detail: 'Whisper Base · پردازنده', size: 77, device: 'wasm', dtype: 'q8',
     repo: 'onnx-community/whisper-base_timestamped', revision: '608c49e61301901684bc36cac8f74b95ff6b5a8e' },
   balanced: { title: 'متعادل', detail: 'Whisper Small', size: 249, device: 'wasm', dtype: 'q8',
@@ -13,11 +15,17 @@ export const digits = value => new Intl.NumberFormat('fa').format(value);
 export const MAX_SECONDS = 15 * 60;
 export const MAX_BYTES = 300_000_000;
 
+export function isAppleMobile(nav = navigator) {
+  const platform = nav.userAgentData?.platform || nav.platform || '';
+  return /iPhone|iPad|iPod/i.test(platform + (nav.userAgent || '')) ||
+    (/Mac/i.test(platform) && nav.maxTouchPoints > 1);
+}
+
 function osLabel(nav) {
   const platform = nav.userAgentData?.platform || nav.platform || '';
   const ua = nav.userAgent || '';
   if (/Android/i.test(platform + ua)) return 'Android';
-  if (/iPhone|iPad|iPod/i.test(platform + ua) || /Mac/.test(platform) && nav.maxTouchPoints > 1) return 'iOS / iPadOS';
+  if (isAppleMobile(nav)) return 'iOS / iPadOS';
   if (/Chrome OS|CrOS/i.test(platform + ua)) return 'ChromeOS';
   if (/Win/i.test(platform)) return 'Windows';
   if (/Mac/i.test(platform)) return 'macOS';
@@ -56,6 +64,7 @@ export async function capabilities(nav = navigator, doc = document) {
 }
 
 export function speechOptions(hardware, language, persianCpu = false) {
+  if (hardware.appleMobile) return [{ ...SPEECH.iphone, id: 'iphone' }];
   const useGPU = hardware.webgpu;
   const options = [{ ...SPEECH.light }, { ...SPEECH.balanced, device: useGPU ? 'webgpu' : 'wasm' }];
   if (language === 'fa' || language === 'auto') {
@@ -68,6 +77,7 @@ export function speechOptions(hardware, language, persianCpu = false) {
 }
 
 export function recommendedSpeech(hardware, language, options) {
+  if (hardware.appleMobile) return 'iphone';
   if (language === 'fa' && options.some(option => option.id === 'persian') &&
       (hardware.webgpu || hardware.ram >= 8 && hardware.cores >= 4)) return 'persian';
   return hardware.webgpu || hardware.ram >= 6 && hardware.cores >= 6 ? 'balanced' : 'light';

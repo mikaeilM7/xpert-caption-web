@@ -2,7 +2,7 @@ import { timestamp } from './core.js';
 import { waveformFor } from './media.js';
 
 export function connectPlayer({ media, player, seek, waveform, play, back, forward, rate, volume,
-  clock, fullscreen, label, onTime, onError }) {
+  clock, fullscreen, label, onTime, onError, drawWaveform = true }) {
   let file;
   let peaks;
   let restoredTime = 0;
@@ -90,13 +90,13 @@ export function connectPlayer({ media, player, seek, waveform, play, back, forwa
       player.hidden = !nextFile;
       player.classList.toggle('audio-only', !video);
       fullscreen.hidden = !video;
-      waveform.hidden = !!video;
+      waveform.hidden = !!video || !drawWaveform;
       label.textContent = nextFile ? (video ? 'پیش‌نمایش ویدیو' : 'پیش‌نمایش صدا') : '';
       if (url) media.src = url;
       else media.removeAttribute('src');
       media.load();
       update();
-      if (nextFile && !video) {
+      if (nextFile && !video && drawWaveform) {
         waveformFor(nextFile).then(values => {
           if (current === loadId) { peaks = values; draw(); }
         }).catch(() => {});
