@@ -7,13 +7,15 @@ const MODEL_URL = /^https:\/\/huggingface\.co\/([\w-]+\/[\w.-]+)\/resolve\/(main
 const diskHeaders = { 'X-Xpert-Local-Request': 'model-store' };
 const android = location.origin === 'https://appassets.androidplatform.net';
 const modelRevisions = new Map();
+const mobileSpeechModels = new Set();
 const fetchUpstream = globalThis.fetch.bind(globalThis);
 let directory;
 let diskSupport;
 let mobileDatabase;
 
-function isMobileSpeech(url) {
-  return url.startsWith('https://huggingface.co/Xenova/whisper-tiny/resolve/') && MODEL_URL.test(url);
+export function isMobileSpeech(url) {
+  const match = MODEL_URL.exec(url);
+  return Boolean(match && mobileSpeechModels.has(match[1]));
 }
 
 function openMobileDatabase() {
@@ -57,8 +59,9 @@ async function rangeStore(url, create = false) {
   } : null;
 }
 
-export function registerModelRevision(repo, revision) {
+export function registerModelRevision(repo, revision, mobileSpeech = false) {
   modelRevisions.set(repo, revision);
+  if (mobileSpeech) mobileSpeechModels.add(repo);
 }
 
 export function pinnedModelUrl(url) {

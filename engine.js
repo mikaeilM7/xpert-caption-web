@@ -1,13 +1,14 @@
 import { timedRows, groupWords } from './core.js';
-import { fetchModelFile, modelCache, registerModelRevision } from './model-cache.js';
+import { fetchModelFile, isMobileSpeech, modelCache, registerModelRevision } from './model-cache.js';
 import { speechRanges } from './speech-filter.js';
 
 const CDN = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.0/dist/transformers.min.js';
 const MOBILE_CDN = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js';
+const MOBILE_PERSIAN_CDN = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.min.js';
 const TRANSLATOR = 'Xenova/m2m100_418M';
 const TRANSLATOR_REV = '9c374f0b7aca709787cea97b047bfbbd1559d177';
 let transformers;
-let mobileTransformers;
+const mobileTransformers = new Map();
 let active;
 let modelProgress;
 
@@ -35,14 +36,15 @@ function reportModelTransfer(file, loaded, total) {
   modelProgress?.({ type: 'model-transfer', file, loaded, total });
 }
 
-async function getMobileLibrary() {
-  if (!mobileTransformers) {
-    // Transformers 2 uses the worker's fetch directly. Limit the override to the mobile speech model.
-    const originalFetch = self.fetch.bind(self);
-    self.fetch = (url, options) => typeof url === 'string' &&
-      url.startsWith('https://huggingface.co/Xenova/whisper-tiny/resolve/')
-      ? fetchModelFile(url, options, reportModelTransfer) : originalFetch(url, options);
-    mobileTransformers = import(MOBILE_CDN).then(module => {
+async function getMobileLibrary(url = MOBILE_CDN) {
+  if (!mobileTransformers.has(url)) {
+    if (!mobileTransformers.size) {
+      // These runtimes use the worker's fetch to read model files.
+      const originalFetch = self.fetch.bind(self);
+      self.fetch = (request, options) => typeof request === 'string' && isMobileSpeech(request)
+        ? fetchModelFile(request, options, reportModelTransfer) : originalFetch(request, options);
+    }
+    const library = import(url).then(module => {
       module.env.allowLocalModels = false;
       module.env.useBrowserCache = false;
       module.env.useCustomCache = true;
@@ -50,9 +52,10 @@ async function getMobileLibrary() {
       module.env.backends.onnx.wasm.numThreads = 1;
       module.env.backends.onnx.wasm.proxy = false;
       return module;
-    }).catch(error => { self.fetch = originalFetch; mobileTransformers = null; throw error; });
+    });
+    mobileTransformers.set(url, library);
   }
-  return mobileTransformers;
+  return mobileTransformers.get(url);
 }
 
 async function unload() {
@@ -79,20 +82,48 @@ async function getPipeline(kind, model, post) {
   const key = [kind, model.repo, model.device, model.dtype].join('/');
   if (active?.key === key) return active.instance;
   await unload();
-  registerModelRevision(model.repo, model.revision);
-  post({ type: 'stage', stage: 'model' });
   const iphone = model.id === 'iphone';
+  const iphonePersian = model.id === 'iphonePersian';
+  registerModelRevision(model.repo, model.revision, iphone || iphonePersian);
+  post({ type: 'stage', stage: 'model' });
   const options = {
     revision: model.revision,
     progress_callback(event) {
       post({ type: 'download', state: event.status, file: event.file, loaded: event.loaded, total: event.total });
     },
   };
-  const instance = iphone
-    ? await loadMobileSpeech(model.repo, { ...options, quantized: true })
-    : await (await getLibrary()).pipeline(kind, model.repo, { ...options, device: model.device, dtype: model.dtype });
+  let instance;
+  if (iphone) {
+    instance = await loadMobileSpeech(model.repo, { ...options, quantized: true });
+  } else {
+    const library = await (iphonePersian ? getMobileLibrary(MOBILE_PERSIAN_CDN) : getLibrary());
+    instance = await library.pipeline(kind, model.repo, { ...options, device: model.device, dtype: model.dtype });
+  }
   active = { key, instance };
   return instance;
+}
+
+function windowsAtPauses(audio) {
+  const windows = [];
+  const sampleRate = 16000;
+  const windowSize = 15 * sampleRate;
+  const step = sampleRate / 20;
+  let start = 0;
+  while (start < audio.length) {
+    const limit = Math.min(start + windowSize, audio.length);
+    let end = limit;
+    if (limit < audio.length) {
+      let minimum = Infinity;
+      for (let candidate = limit - 2 * sampleRate; candidate < limit; candidate += step) {
+        let energy = 0;
+        for (let i = candidate; i < candidate + step; i += 8) energy += Math.abs(audio[i]);
+        if (energy <= minimum) { minimum = energy; end = candidate + step / 2; }
+      }
+    }
+    windows.push([start / sampleRate, end / sampleRate]);
+    start = end;
+  }
+  return windows;
 }
 
 async function speechJob(message, post) {
@@ -107,18 +138,20 @@ async function speechJob(message, post) {
   }
   let model = message.model;
   const iphone = model.id === 'iphone';
+  const windowTiming = model.id === 'iphonePersian';
+  if (windowTiming) windows = windowsAtPauses(input);
   async function execute() {
     const transcriber = await getPipeline('automatic-speech-recognition', model, post);
     post({ type: 'stage', stage: 'speech' });
     const chunks = [];
     const text = [];
-    let realWords = message.words;
+    let realWords = message.words && !windowTiming;
     for (const [index, [start, end]] of windows.entries()) {
       const samples = input.subarray(Math.round(start * 16000), Math.round(end * 16000));
       const config = {
         ...(end - start > (iphone ? 15 : 25) ? { chunk_length_s: iphone ? 15 : 24, stride_length_s: iphone ? 2 : 3 } : {}),
-        task: 'transcribe', return_timestamps: realWords ? 'word' : true,
-        num_beams: iphone ? 1 : model.id === 'persian' ? (model.device === 'webgpu' ? 3 : 2) : 2,
+        task: 'transcribe', return_timestamps: windowTiming ? false : realWords ? 'word' : true,
+        num_beams: iphone || windowTiming ? 1 : model.id === 'persian' ? (model.device === 'webgpu' ? 3 : 2) : 2,
         ...(message.language === 'auto' ? {} : { language: message.language }),
       };
       let result;
@@ -129,7 +162,11 @@ async function speechJob(message, post) {
         realWords = false;
         result = await transcriber(samples, { ...config, return_timestamps: true });
       }
-      if (result.text?.trim()) text.push(result.text.trim());
+      const transcript = result.text?.trim();
+      if (transcript) {
+        text.push(transcript);
+        if (windowTiming) chunks.push({ text: transcript, timestamp: [start, end] });
+      }
       for (const row of timedRows(result.chunks, end - start)) {
         chunks.push({ text: row.text, timestamp: [start + row.start, start + row.end] });
       }

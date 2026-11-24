@@ -1,6 +1,8 @@
 export const SPEECH = {
-  iphone: { title: 'سبکِ آیفون', detail: 'Whisper Tiny · پردازنده', size: 45, device: 'wasm', dtype: 'q8',
-    repo: 'Xenova/whisper-tiny', revision: '5332fcc35e32a33b86612b9a57a89be7906102b1' },
+  iphone: { title: 'Whisper Base برای آیفون', detail: 'تشخیص چندزبانه · پردازنده', size: 80, device: 'wasm', dtype: 'q8',
+    repo: 'Xenova/whisper-base', revision: '64da57285918e20ea79ea5c88eed7197933abaa8' },
+  iphonePersian: { title: 'فارسی ویژهٔ آیفون', detail: 'Whisper Base Persian · پردازنده', size: 109, device: 'wasm', dtype: 'q8',
+    repo: 'armantee/whisper-base-persian-onnx', revision: '2a29564b0977b04d78a4f546c00d01950917f9ba' },
   light: { title: 'سبک', detail: 'Whisper Base · پردازنده', size: 77, device: 'wasm', dtype: 'q8',
     repo: 'onnx-community/whisper-base_timestamped', revision: '608c49e61301901684bc36cac8f74b95ff6b5a8e' },
   balanced: { title: 'متعادل', detail: 'Whisper Small', size: 249, device: 'wasm', dtype: 'q8',
@@ -64,7 +66,10 @@ export async function capabilities(nav = navigator, doc = document) {
 }
 
 export function speechOptions(hardware, language, persianCpu = false) {
-  if (hardware.appleMobile) return [{ ...SPEECH.iphone, id: 'iphone' }];
+  if (hardware.appleMobile) {
+    const id = language === 'fa' ? 'iphonePersian' : 'iphone';
+    return [{ ...SPEECH[id], id }];
+  }
   const useGPU = hardware.webgpu;
   const options = [{ ...SPEECH.light }, { ...SPEECH.balanced, device: useGPU ? 'webgpu' : 'wasm' }];
   if (language === 'fa' || language === 'auto') {
@@ -77,7 +82,7 @@ export function speechOptions(hardware, language, persianCpu = false) {
 }
 
 export function recommendedSpeech(hardware, language, options) {
-  if (hardware.appleMobile) return 'iphone';
+  if (hardware.appleMobile) return options[0].id;
   if (language === 'fa' && options.some(option => option.id === 'persian') &&
       (hardware.webgpu || hardware.ram >= 8 && hardware.cores >= 4)) return 'persian';
   return hardware.webgpu || hardware.ram >= 6 && hardware.cores >= 6 ? 'balanced' : 'light';
