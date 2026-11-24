@@ -10,6 +10,52 @@ const modelRevisions = new Map();
 const fetchUpstream = globalThis.fetch.bind(globalThis);
 let directory;
 let diskSupport;
+let mobileDatabase;
+
+function isMobileSpeech(url) {
+  return url.startsWith('https://huggingface.co/Xenova/whisper-tiny/resolve/') && MODEL_URL.test(url);
+}
+
+function openMobileDatabase() {
+  mobileDatabase ??= new Promise(resolve => {
+    if (!globalThis.indexedDB) { resolve(null); return; }
+    const request = indexedDB.open(CACHE, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('files');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = request.onblocked = () => resolve(null);
+  }).catch(() => null);
+  return mobileDatabase;
+}
+
+async function mobileFile(db, key, value) {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction('files', value === undefined ? 'readonly' : 'readwrite');
+    const files = transaction.objectStore('files');
+    const request = value === undefined ? files.get(key) : files.put(value, key);
+    transaction.oncomplete = () => resolve(request.result);
+    transaction.onabort = () => reject(transaction.error);
+  });
+}
+
+async function rangeStore(url, create = false) {
+  const dir = await getDirectory();
+  if (dir) {
+    const folder = await dir.getDirectoryHandle('ranges-' + await cacheKey(url), { create }).catch(() => null);
+    if (folder) return {
+      read: name => folder.getFileHandle(name).then(handle => handle.getFile()),
+      write: (name, body) => writeRangeFile(folder, name, body),
+    };
+  }
+  const db = isMobileSpeech(url) && await openMobileDatabase();
+  return db ? {
+    async read(name) {
+      const bytes = await mobileFile(db, url + '#' + name);
+      return bytes && new Blob([bytes]);
+    },
+    write: (name, body) => mobileFile(db, url + '#' + name,
+      typeof body === 'string' ? new TextEncoder().encode(body) : body),
+  } : null;
+}
 
 export function registerModelRevision(repo, revision) {
   modelRevisions.set(repo, revision);
@@ -33,15 +79,11 @@ export async function fetchModelFile(url, options, report = () => {}) {
     }
   }
   if (!android && typeof canonical === 'string' && isWeight(canonical) && !await diskRoute(canonical)) {
-    const dir = await getDirectory();
-    if (dir) {
-      const key = await cacheKey(canonical);
-      const folder = await dir.getDirectoryHandle('ranges-' + key, { create: true }).catch(() => null);
-      if (folder) {
-        const download = () => downloadRanges(canonical, options, folder, report);
-        if (navigator.locks) return navigator.locks.request('xpert-model-' + key, download);
-        return download();
-      }
+    const storage = await rangeStore(canonical, true);
+    if (storage) {
+      const download = () => downloadRanges(canonical, options, storage, report);
+      if (navigator.locks) return navigator.locks.request('xpert-model-' + await cacheKey(canonical), download);
+      return download();
     }
   }
   return fetchUpstream(canonical, options);
@@ -94,22 +136,21 @@ function isWeight(url) {
     /\.(?:onnx(?:_data(?:_\d+)?)?|ort)$/.test(url) && MODEL_URL.test(url);
 }
 
-async function readSize(folder) {
+async function readSize(storage) {
   try {
-    const file = await (await folder.getFileHandle('size')).getFile();
-    const size = Number(await file.text());
+    const size = Number(await (await storage.read('size'))?.text());
     return Number.isSafeInteger(size) && size > 0 && size <= MAX_RANGE_FILE ? size : 0;
   } catch { return 0; }
 }
 
-async function loadParts(folder, total) {
+async function loadParts(storage, total) {
   const parts = [];
   let offset = 0;
   while (offset < total) {
     const expected = Math.min(RANGE_SIZE, total - offset);
     try {
-      const file = await (await folder.getFileHandle('part-' + parts.length)).getFile();
-      if (file.size !== expected) break;
+      const file = await storage.read('part-' + parts.length);
+      if (file?.size !== expected) break;
       parts.push(file);
       offset += file.size;
     } catch { break; }
@@ -117,7 +158,7 @@ async function loadParts(folder, total) {
   return { parts, offset };
 }
 
-async function writePart(folder, name, body) {
+async function writeRangeFile(folder, name, body) {
   let output;
   try {
     output = await openWritable(await folder.getFileHandle(name, { create: true }));
@@ -125,7 +166,7 @@ async function writePart(folder, name, body) {
     await output.close();
   } catch (error) {
     if (output) await output.abort().catch(() => {});
-    throw new Error('فضای ذخیرهٔ مدل در مرورگر کافی نیست یا در دسترس نیست.', { cause: error });
+    throw error;
   }
 }
 
@@ -159,9 +200,9 @@ async function requestRange(url, options, start, end) {
   }
 }
 
-async function downloadRanges(url, options, folder, report) {
-  let total = await readSize(folder);
-  let { parts, offset } = await loadParts(folder, total);
+async function downloadRanges(url, options, storage, report) {
+  let total = await readSize(storage);
+  let { parts, offset } = await loadParts(storage, total);
   if (total && offset) report(url, offset, total);
   while (!total || offset < total) {
     const chunk = await requestRange(url, options, offset, offset + RANGE_SIZE - 1);
@@ -169,15 +210,20 @@ async function downloadRanges(url, options, folder, report) {
       if (!offset || !chunk.full.ok || chunk.full.status === 200) return chunk.full;
       throw new Error('سرور ادامهٔ دانلود مدل را نپذیرفت. دوباره تلاش کن.');
     }
-    if (!total) {
-      total = chunk.size;
-      await writePart(folder, 'size', String(total));
-    } else if (total !== chunk.size) {
+    if (total && total !== chunk.size) {
       throw new Error('اندازهٔ فایل مدل تغییر کرد. دوباره تلاش کن.');
     }
     const key = 'part-' + parts.length;
-    await writePart(folder, key, chunk.data);
-    parts.push(await (await folder.getFileHandle(key)).getFile());
+    try {
+      if (!total) {
+        total = chunk.size;
+        await storage.write('size', String(total));
+      }
+      await storage.write(key, chunk.data);
+      parts.push(await storage.read(key));
+    } catch (error) {
+      throw new Error('فضای ذخیرهٔ مدل در مرورگر کافی نیست یا در دسترس نیست.', { cause: error });
+    }
     offset += chunk.data.length;
     report(url, offset, total);
   }
@@ -315,11 +361,11 @@ export const modelCache = {
         const dir = await getDirectory();
         const digest = dir ? await cacheKey(key) : null;
         let blob;
-        if (digest && isWeight(key)) {
+        if (isWeight(key)) {
           try {
-            const folder = await dir.getDirectoryHandle('ranges-' + digest);
-            const size = await readSize(folder);
-            const saved = await loadParts(folder, size);
+            const storage = await rangeStore(key);
+            const size = storage ? await readSize(storage) : 0;
+            const saved = await loadParts(storage, size);
             if (size && saved.offset === size) blob = new Blob(saved.parts);
           } catch { /* An interrupted download keeps its finished chunks. */ }
         }
@@ -329,6 +375,13 @@ export const modelCache = {
           return blobResponse(blob);
         }
       } catch { /* Absent and incomplete cache entries are safe to miss. */ }
+      if (isMobileSpeech(key)) {
+        try {
+          const db = await openMobileDatabase();
+          const bytes = db && await mobileFile(db, key);
+          if (bytes) return blobResponse(new Blob([bytes]));
+        } catch { /* IndexedDB can be disabled by browser policy. */ }
+      }
       try {
         const previous = await (await caches.open(CACHE)).match(key);
         if (!previous) continue;
@@ -353,6 +406,15 @@ export const modelCache = {
       }
       if (dir && response.body) {
         await storeResponse(dir, await cacheKey(canonical), response);
+        return;
+      }
+      const db = isMobileSpeech(canonical) && await openMobileDatabase();
+      if (db) {
+        const ranges = isWeight(canonical) ? await rangeStore(canonical) : null;
+        const size = ranges ? await readSize(ranges) : 0;
+        if (!size || (await loadParts(ranges, size)).offset !== size) {
+          await mobileFile(db, canonical, await response.arrayBuffer());
+        }
         return;
       }
       await (await caches.open(CACHE)).put(canonical, response);

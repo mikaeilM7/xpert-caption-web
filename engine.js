@@ -63,6 +63,18 @@ async function unload() {
   }
 }
 
+async function loadMobileSpeech(repo, options) {
+  const library = await getMobileLibrary();
+  const [model, tokenizer, processor] = await Promise.all([
+    library.WhisperForConditionalGeneration.from_pretrained(repo, options),
+    library.AutoTokenizer.from_pretrained(repo, options),
+    library.AutoProcessor.from_pretrained(repo, options),
+  ]);
+  return new library.AutomaticSpeechRecognitionPipeline({
+    task: 'automatic-speech-recognition', model, tokenizer, processor,
+  });
+}
+
 async function getPipeline(kind, model, post) {
   const key = [kind, model.repo, model.device, model.dtype].join('/');
   if (active?.key === key) return active.instance;
@@ -70,14 +82,15 @@ async function getPipeline(kind, model, post) {
   registerModelRevision(model.repo, model.revision);
   post({ type: 'stage', stage: 'model' });
   const iphone = model.id === 'iphone';
-  const { pipeline } = await (iphone ? getMobileLibrary() : getLibrary());
-  const instance = await pipeline(kind, model.repo, {
-    ...(iphone ? { quantized: true } : { device: model.device, dtype: model.dtype }),
+  const options = {
     revision: model.revision,
     progress_callback(event) {
       post({ type: 'download', state: event.status, file: event.file, loaded: event.loaded, total: event.total });
     },
-  });
+  };
+  const instance = iphone
+    ? await loadMobileSpeech(model.repo, { ...options, quantized: true })
+    : await (await getLibrary()).pipeline(kind, model.repo, { ...options, device: model.device, dtype: model.dtype });
   active = { key, instance };
   return instance;
 }
